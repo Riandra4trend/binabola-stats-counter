@@ -132,28 +132,40 @@ export default function TrackerPage() {
   }, [running]);
 
   const logEvent = useCallback((eventKey) => {
-    if (!selectedJersey) {
-      setFlash({ type: "noJersey" });
-      setTimeout(() => setFlash(null), 500);
-      return;
-    }
-
     const currentTimer = timerSecRef.current;
     const timestamp = formatTime(currentTimer);
+    const j = selectedJersey;
     const newEvent = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       timestamp,
       timerSec: currentTimer,
       team: selectedTeam,
-      jersey: selectedJersey.number,
-      playerName: selectedJersey.name,
+      jersey: j ? j.number : "",
+      playerName: j ? (j.name || "") : "",
       event: eventKey,
     };
     historyRef.current.push({ event: newEvent, timerSecBefore: currentTimer });
     setEvents(prev => [newEvent, ...prev]);
+    setSelectedJersey(null);
     setFlash({ type: "event", team: selectedTeam, event: eventKey });
     setTimeout(() => setFlash(null), 300);
   }, [selectedTeam, selectedJersey]);
+
+  const removeEventById = useCallback((eventId) => {
+    setEvents(prev => prev.filter(e => e.id !== eventId));
+    historyRef.current = historyRef.current.filter(h => h.event.id !== eventId);
+  }, []);
+
+  const resetMatch = useCallback(() => {
+    setRunning(false);
+    setTimerSec(0);
+    timerSecRef.current = 0;
+    setEvents([]);
+    historyRef.current = [];
+    setSelectedJersey(null);
+    setSelectedTeam("home");
+    setFlash(null);
+  }, []);
 
   const undo = useCallback(() => {
     if (historyRef.current.length === 0) return;
@@ -216,7 +228,6 @@ export default function TrackerPage() {
   const currentJerseys = selectedTeam === "home" ? session.homeJerseys : session.awayJerseys;
 
   const isGoalFlash = flash?.type === "event" && flash?.event === "GOAL";
-  const isNoJerseyFlash = flash?.type === "noJersey";
 
   return (
     <div style={{
@@ -236,25 +247,6 @@ export default function TrackerPage() {
           pointerEvents: "none",
           animation: "goalFlash 0.3s ease",
         }} />
-      )}
-
-      {/* No jersey warning overlay */}
-      {isNoJerseyFlash && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 999,
-          background: "#f59e0b18",
-          border: "4px solid #f59e0b",
-          pointerEvents: "none",
-          animation: "goalFlash 0.5s ease",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{
-            background: "#f59e0b", color: "#000", padding: "10px 24px",
-            borderRadius: 8, fontWeight: 900, fontSize: 14, letterSpacing: 2,
-          }}>
-            SELECT JERSEY FIRST
-          </div>
-        </div>
       )}
 
       {/* Header */}
@@ -315,7 +307,7 @@ export default function TrackerPage() {
             color: "#fff", fontFamily: "inherit", fontWeight: 700,
             fontSize: 13, cursor: "pointer", letterSpacing: 1,
           }}>{running ? "⏸ PAUSE" : "▶ START"}</button>
-          <button onClick={() => { setRunning(false); setTimerSec(0); historyRef.current = []; }} style={{
+          <button onClick={resetMatch} style={{
             padding: "10px 16px", borderRadius: 6, border: "1px solid #333",
             background: "#1a1a2a", color: "#888", fontFamily: "inherit",
             fontWeight: 700, fontSize: 13, cursor: "pointer",
@@ -462,13 +454,13 @@ export default function TrackerPage() {
             </div>
             {events.length === 0 && (
               <div style={{ padding: "20px 14px", color: "#333", fontSize: 12, textAlign: "center" }}>
-                No events yet.<br />Select team + jersey + click an event.
+                No events yet.<br />Pick a side, optionally a jersey, then tap an event.
               </div>
             )}
             {events.map((ev, i) => (
               <div key={ev.id} style={{
                 display: "flex", alignItems: "center", gap: 8,
-                padding: "5px 14px",
+                padding: "5px 8px 5px 14px",
                 background: i === 0 ? `${teamColor(ev.team)}15` : "transparent",
                 borderLeft: i === 0 ? `3px solid ${teamColor(ev.team)}` : "3px solid transparent",
               }}>
@@ -477,15 +469,40 @@ export default function TrackerPage() {
                   width: 8, height: 8, borderRadius: "50%",
                   background: teamColor(ev.team), flexShrink: 0,
                 }} />
-                {ev.jersey && (
+                {ev.jersey ? (
                   <span style={{
                     fontSize: 10, color: teamColor(ev.team), fontWeight: 700,
                     minWidth: 24, textAlign: "center",
                     background: `${teamColor(ev.team)}22`,
                     borderRadius: 4, padding: "1px 5px",
                   }}>#{ev.jersey}</span>
+                ) : (
+                  <span style={{
+                    fontSize: 9, color: "#444", fontWeight: 600,
+                    minWidth: 24, textAlign: "center",
+                    letterSpacing: 0.5,
+                  }}>—</span>
                 )}
-                <span style={{ fontSize: 11, color: "#ccc", letterSpacing: 0.5 }}>{ev.event}</span>
+                <span style={{ fontSize: 11, color: "#ccc", letterSpacing: 0.5, flex: 1, minWidth: 0 }}>{ev.event}</span>
+                <button
+                  type="button"
+                  title="Remove this log"
+                  onClick={() => removeEventById(ev.id)}
+                  style={{
+                    flexShrink: 0,
+                    padding: "2px 6px",
+                    border: "1px solid #2a2a3a",
+                    borderRadius: 4,
+                    background: "#151520",
+                    color: "#555",
+                    fontFamily: "inherit",
+                    fontSize: 11,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
               </div>
             ))}
           </div>
@@ -523,7 +540,10 @@ function JerseySelector({ jerseys, selected, onSelect, teamColor, teamName }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: 9, letterSpacing: 3, color: "#444", marginBottom: 7, paddingLeft: 2 }}>
-        PLAYER — {teamName} {selected ? `(#${selected.number}${selected.name ? " · " + selected.name : ""})` : "(none selected)"}
+        PLAYER — {teamName}{" "}
+        {selected
+          ? `(#${selected.number}${selected.name ? " · " + selected.name : ""})`
+          : "(NONE = team only)"}
       </div>
       <div style={{
         display: "flex", flexWrap: "wrap", gap: 6,

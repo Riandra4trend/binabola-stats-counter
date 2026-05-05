@@ -3,41 +3,50 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { saveSession, loadSession, clearSession } from "@/lib/session";
 
+/** Plain key + optional Shift (same letter). First-letter conflicts use iconic/alternate letters — see comments. */
 const EVENTS = {
   HIGH: [
-    { key: "PASS_SUCCESS", label: "PASS ✓", shortcut: "Q" },
-    { key: "PASS_FAIL", label: "PASS ✗", shortcut: "W" },
-    { key: "INTERCEPTION", label: "INTERCEPT", shortcut: "E" },
-    { key: "TACKLE_SUCCESS", label: "TACKLE ✓", shortcut: "R" },
+    { key: "PASS_SUCCESS", label: "PASS ✓", shortcutKey: "P", shortcutShift: false },
+    { key: "PASS_FAIL", label: "PASS ✗", shortcutKey: "P", shortcutShift: true },
+    { key: "INTERCEPTION", label: "INTERCEPT", shortcutKey: "I", shortcutShift: false },
+    { key: "TACKLE_SUCCESS", label: "TACKLE ✓", shortcutKey: "T", shortcutShift: false },
   ],
   MEDIUM: [
-    { key: "DRIVE", label: "DRIVE", shortcut: null },
-    { key: "DRIBBLE_SUCCESS", label: "DRIBBLE ✓", shortcut: null },
-    { key: "CLEARANCE", label: "CLEARANCE", shortcut: null },
-    { key: "BLOCK_SHOT", label: "BLOCK SHOT", shortcut: null },
+    { key: "DRIVE", label: "DRIVE", shortcutKey: "D", shortcutShift: false },
+    { key: "DRIBBLE_SUCCESS", label: "DRIBBLE ✓", shortcutKey: "D", shortcutShift: true },
+    { key: "CLEARANCE", label: "CLEARANCE", shortcutKey: "C", shortcutShift: false },
+    { key: "BLOCK_SHOT", label: "BLOCK SHOT", shortcutKey: "B", shortcutShift: false },
   ],
   ATTACK: [
-    { key: "SHOT_ON_TARGET", label: "SHOT ON 🎯", shortcut: "T" },
-    { key: "SHOT_OFF_TARGET", label: "SHOT OFF", shortcut: "Y" },
-    { key: "GOAL", label: "⚽ GOAL!", shortcut: "G" },
+    { key: "SHOT_ON_TARGET", label: "SHOT ON 🎯", shortcutKey: "S", shortcutShift: false },
+    { key: "SHOT_OFF_TARGET", label: "SHOT OFF", shortcutKey: "S", shortcutShift: true },
+    { key: "GOAL", label: "⚽ GOAL!", shortcutKey: "G", shortcutShift: false },
   ],
   CROSS: [
-    { key: "CROSS_SUCCESS", label: "CROSS ✓", shortcut: null },
-    { key: "CROSS_FAIL", label: "CROSS ✗", shortcut: null },
-    { key: "HIGH_PASS_SUCCESS", label: "HIGH PASS ✓", shortcut: null },
-    { key: "HIGH_PASS_FAIL", label: "HIGH PASS ✗", shortcut: null },
+    // "C" taken by CLEARANCE — X = cross
+    { key: "CROSS_SUCCESS", label: "CROSS ✓", shortcutKey: "X", shortcutShift: false },
+    { key: "CROSS_FAIL", label: "CROSS ✗", shortcutKey: "X", shortcutShift: true },
+    { key: "HIGH_PASS_SUCCESS", label: "HIGH PASS ✓", shortcutKey: "H", shortcutShift: false },
+    { key: "HIGH_PASS_FAIL", label: "HIGH PASS ✗", shortcutKey: "H", shortcutShift: true },
   ],
   SET: [
-    { key: "FREE_KICK", label: "FREE KICK", shortcut: null },
-    { key: "CORNER", label: "CORNER", shortcut: null },
-    { key: "THROW_IN", label: "THROW IN", shortcut: null },
-    { key: "GOAL_KICK", label: "GOAL KICK", shortcut: null },
-    { key: "PENALTY_KICK", label: "PENALTY", shortcut: null },
-    { key: "KICK_OFF", label: "KICK OFF", shortcut: null },
+    { key: "FREE_KICK", label: "FREE KICK", shortcutKey: "F", shortcutShift: false },
+    // "C" taken — R = corner
+    { key: "CORNER", label: "CORNER", shortcutKey: "R", shortcutShift: false },
+    { key: "THROW_IN", label: "THROW IN", shortcutKey: "W", shortcutShift: false },
+    { key: "GOAL_KICK", label: "GOAL KICK", shortcutKey: "K", shortcutShift: false },
+    { key: "PENALTY_KICK", label: "PENALTY", shortcutKey: "N", shortcutShift: false },
+    // "K" taken by GOAL_KICK — O = kickOff
+    { key: "KICK_OFF", label: "KICK OFF", shortcutKey: "O", shortcutShift: false },
   ],
 };
 
 const ALL_EVENTS_FLAT = Object.values(EVENTS).flat();
+
+function shortcutLabel(ev) {
+  if (!ev.shortcutKey) return null;
+  return ev.shortcutShift ? `⇧${ev.shortcutKey}` : ev.shortcutKey;
+}
 
 function formatTimeMs(ms) {
   const total = Math.max(0, Math.floor(ms));
@@ -176,18 +185,21 @@ export default function TrackerPage() {
 
     const newest = eventsRef.current[0];
     /**
-     * Latest row is PASS ✓ for one side; next action is PASS ✓ or PASS ✗ for the other side (nothing in between)
-     * → turn that prior PASS ✓ into PASS ✗, then log the new pass row.
+     * Latest row is PASS ✓ for one side; next action (nothing in between) is either:
+     * - PASS ✓ or PASS ✗ for the other side, or
+     * - INTERCEPTION for the other side
+     * → prior PASS ✓ becomes PASS ✗, then log the new row.
      */
     const isOppositePassFollowUp =
       eventKey === "PASS_SUCCESS" || eventKey === "PASS_FAIL";
+    const isOppositeInterceptionFollowUp = eventKey === "INTERCEPTION";
     const shouldCorrectPass =
       newest &&
       newest.event === "PASS_SUCCESS" &&
       newest.team !== selectedTeam &&
       (newest.team === "home" || newest.team === "away") &&
       (selectedTeam === "home" || selectedTeam === "away") &&
-      isOppositePassFollowUp;
+      (isOppositePassFollowUp || isOppositeInterceptionFollowUp);
 
     if (shouldCorrectPass) {
       const origMs = eventTimerMs(newest);
@@ -324,6 +336,17 @@ export default function TrackerPage() {
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT") return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setSelectedTeam("home");
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setSelectedTeam("away");
+        return;
+      }
+
       const key = e.key.toUpperCase();
 
       if (e.key === "Backspace") {
@@ -339,11 +362,17 @@ export default function TrackerPage() {
       }
       if (e.ctrlKey || e.metaKey) return;
 
-      if (key === "Z") { setSelectedTeam("home"); return; }
-      if (key === "X") { setSelectedTeam("away"); return; }
-
-      const match = ALL_EVENTS_FLAT.find(ev => ev.shortcut === key);
-      if (match) { e.preventDefault(); logEvent(match.key); }
+      if (e.key.length === 1) {
+        const upper = e.key.toUpperCase();
+        const matches = ALL_EVENTS_FLAT.filter(
+          (ev) => ev.shortcutKey && ev.shortcutKey.toUpperCase() === upper,
+        );
+        const match = matches.find((ev) => !!ev.shortcutShift === e.shiftKey);
+        if (match) {
+          e.preventDefault();
+          logEvent(match.key);
+        }
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -543,7 +572,7 @@ export default function TrackerPage() {
           transition: "all 0.1s",
           boxShadow: selectedTeam === "home" ? "0 0 20px #3b82f688" : "none",
         }}>
-          [Z] ◀ {session.homeTeam}
+          [←] ◀ {session.homeTeam}
         </button>
         <button onClick={() => { setSelectedTeam("away"); setSelectedJersey(null); }} style={{
           flex: 1, padding: "14px 0", border: "none", borderRadius: "0 8px 8px 0",
@@ -555,7 +584,7 @@ export default function TrackerPage() {
           transition: "all 0.1s",
           boxShadow: selectedTeam === "away" ? "0 0 20px #ef444488" : "none",
         }}>
-          {session.awayTeam} ▶ [X]
+          {session.awayTeam} ▶ [→]
         </button>
       </div>
 
@@ -811,6 +840,7 @@ function EventBtn({ ev, team, flash, onClick, size }) {
   const color = team === "home" ? "#3b82f6" : "#ef4444";
   const activeColor = team === "home" ? "#1d4ed8" : "#b91c1c";
   const isGoal = ev.key === "GOAL";
+  const sk = shortcutLabel(ev);
 
   const heights = { large: 54, medium: 44, small: 36, goal: 54 };
   const fontSizes = { large: 13, medium: 12, small: 10, goal: 15 };
@@ -841,9 +871,9 @@ function EventBtn({ ev, team, flash, onClick, size }) {
       }}
     >
       <span>{ev.label}</span>
-      {ev.shortcut && (
+      {sk && (
         <span style={{ fontSize: 8, color: isFlashing ? "#ffffff88" : "#555", letterSpacing: 1 }}>
-          [{ev.shortcut}]
+          [{sk}]
         </span>
       )}
     </button>

@@ -174,6 +174,8 @@ export default function TrackerPage() {
     historyRef.current.push({ event: newEvent, timerMsBefore: currentTimer });
     setEvents(prev => [newEvent, ...prev]);
     setSelectedJersey(null);
+    // Paused → start clock; already running → leave running (never pause on event)
+    setRunning(true);
     setFlash({ type: "event", team: selectedTeam, event: eventKey });
     setTimeout(() => setFlash(null), 300);
   }, [selectedTeam, selectedJersey]);

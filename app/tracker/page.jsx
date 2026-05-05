@@ -64,6 +64,12 @@ function parseTimeMs(str) {
   return min * 60 * 1000 + sec * 1000 + fracMs;
 }
 
+function eventTimerMs(ev) {
+  if (typeof ev.timerMs === "number") return ev.timerMs;
+  if (typeof ev.timerSec === "number") return ev.timerSec * 1000;
+  return 0;
+}
+
 function downloadJSON(events) {
   const blob = new Blob([JSON.stringify(events, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -103,12 +109,17 @@ export default function TrackerPage() {
   const [timerEdit, setTimerEdit] = useState(null);
 
   const timerMsRef = useRef(0);
-  // Stack of { event, timerMsBefore } for proper undo
+  const eventsRef = useRef([]);
+  // Stack: normal { event, timerMsBefore } or passCorrection { kind, ... }
   const historyRef = useRef([]);
 
   useEffect(() => {
     timerMsRef.current = timerMs;
   }, [timerMs]);
+
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
 
   // Load session on mount
   useEffect(() => {
@@ -161,8 +172,81 @@ export default function TrackerPage() {
     const currentTimer = timerMsRef.current;
     const timestamp = formatTimeMs(currentTimer);
     const j = selectedJersey;
+    const mkId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+    const newest = eventsRef.current[0];
+    /** Home PASS ✓ then away PASS ✓ with no other event between → fix prior to PASS ✗ + away INTERCEPTION */
+    const shouldCorrectPass =
+      newest &&
+      newest.event === "PASS_SUCCESS" &&
+      newest.team === "home" &&
+      eventKey === "PASS_SUCCESS" &&
+      selectedTeam === "away";
+
+    if (shouldCorrectPass) {
+      const origMs = eventTimerMs(newest);
+      const correctedFirst = {
+        ...newest,
+        event: "PASS_FAIL",
+        timestamp: formatTimeMs(origMs),
+        timerMs: origMs,
+        timerSec: Math.floor(origMs / 1000),
+      };
+      const interceptionEvent = {
+        id: mkId(),
+        timestamp,
+        timerMs: currentTimer,
+        timerSec: Math.floor(currentTimer / 1000),
+        team: "away",
+        jersey: j ? j.number : "",
+        playerName: j ? (j.name || "") : "",
+        event: "INTERCEPTION",
+      };
+      const newPassEvent = {
+        id: mkId(),
+        timestamp,
+        timerMs: currentTimer,
+        timerSec: Math.floor(currentTimer / 1000),
+        team: "away",
+        jersey: j ? j.number : "",
+        playerName: j ? (j.name || "") : "",
+        event: "PASS_SUCCESS",
+      };
+      historyRef.current.push({
+        kind: "passCorrection",
+        timerMsBefore: currentTimer,
+        newEventIds: [newPassEvent.id, interceptionEvent.id],
+        correctedEventId: newest.id,
+        previousCorrectedEvent: newest,
+      });
+      setEvents((prev) => {
+        const first = prev[0];
+        if (!first || first.id !== newest.id) {
+          historyRef.current.pop();
+          const fallback = {
+            id: mkId(),
+            timestamp,
+            timerMs: currentTimer,
+            timerSec: Math.floor(currentTimer / 1000),
+            team: selectedTeam,
+            jersey: j ? j.number : "",
+            playerName: j ? (j.name || "") : "",
+            event: eventKey,
+          };
+          historyRef.current.push({ event: fallback, timerMsBefore: currentTimer });
+          return [fallback, ...prev];
+        }
+        return [newPassEvent, interceptionEvent, correctedFirst, ...prev.slice(1)];
+      });
+      setSelectedJersey(null);
+      setRunning(true);
+      setFlash({ type: "event", team: "away", event: "PASS_SUCCESS" });
+      setTimeout(() => setFlash(null), 300);
+      return;
+    }
+
     const newEvent = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id: mkId(),
       timestamp,
       timerMs: currentTimer,
       timerSec: Math.floor(currentTimer / 1000),
@@ -182,7 +266,12 @@ export default function TrackerPage() {
 
   const removeEventById = useCallback((eventId) => {
     setEvents(prev => prev.filter(e => e.id !== eventId));
-    historyRef.current = historyRef.current.filter(h => h.event.id !== eventId);
+    historyRef.current = historyRef.current.filter((h) => {
+      if (h.kind === "passCorrection") {
+        return !h.newEventIds.includes(eventId) && h.correctedEventId !== eventId;
+      }
+      return h.event?.id !== eventId;
+    });
   }, []);
 
   const resetMatch = useCallback(() => {
@@ -200,6 +289,19 @@ export default function TrackerPage() {
   const undo = useCallback(() => {
     if (historyRef.current.length === 0) return;
     const last = historyRef.current.pop();
+    if (last.kind === "passCorrection") {
+      setEvents((prev) => {
+        const without = prev.filter(e => !last.newEventIds.includes(e.id));
+        return without.map(e =>
+          e.id === last.correctedEventId ? last.previousCorrectedEvent : e,
+        );
+      });
+      const t = last.timerMsBefore ?? 0;
+      setTimerMs(t);
+      timerMsRef.current = t;
+      setRunning(false);
+      return;
+    }
     setEvents(prev => prev.filter(e => e.id !== last.event.id));
     const prev = last.timerMsBefore ?? (typeof last.timerSecBefore === "number" ? last.timerSecBefore * 1000 : 0);
     setTimerMs(prev);
@@ -227,6 +329,12 @@ export default function TrackerPage() {
     const handler = (e) => {
       if (e.target.tagName === "INPUT") return;
       const key = e.key.toUpperCase();
+
+      if (e.key === "Backspace") {
+        e.preventDefault();
+        undo();
+        return;
+      }
 
       if ((e.ctrlKey || e.metaKey) && key === "Z") {
         e.preventDefault();

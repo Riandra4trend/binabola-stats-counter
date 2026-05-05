@@ -39,10 +39,29 @@ const EVENTS = {
 
 const ALL_EVENTS_FLAT = Object.values(EVENTS).flat();
 
-function formatTime(seconds) {
-  const m = Math.floor(seconds / 60).toString().padStart(2, "0");
-  const s = (seconds % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
+function formatTimeMs(ms) {
+  const total = Math.max(0, Math.floor(ms));
+  const m = Math.floor(total / 60000);
+  const s = Math.floor((total % 60000) / 1000);
+  const milli = total % 1000;
+  const mm = m < 100 ? String(m).padStart(2, "0") : String(m);
+  return `${mm}:${String(s).padStart(2, "0")}.${String(milli).padStart(3, "0")}`;
+}
+
+/** Parses MM:SS, MM:SS.m, MM:SS.mm, MM:SS.mmm */
+function parseTimeMs(str) {
+  const trimmed = str.trim();
+  if (!trimmed) return null;
+  const m = trimmed.match(/^(\d+):(\d{1,2})(?:\.(\d{0,3}))?$/);
+  if (!m) return null;
+  const min = parseInt(m[1], 10);
+  const sec = parseInt(m[2], 10);
+  if (sec > 59) return null;
+  let fracMs = 0;
+  if (m[3] != null && m[3] !== "") {
+    fracMs = parseInt(m[3].padEnd(3, "0").slice(0, 3), 10);
+  }
+  return min * 60 * 1000 + sec * 1000 + fracMs;
 }
 
 function downloadJSON(events) {
@@ -78,18 +97,18 @@ export default function TrackerPage() {
   const [selectedTeam, setSelectedTeam] = useState("home");
   const [selectedJersey, setSelectedJersey] = useState(null); // { number, name } | null
   const [events, setEvents] = useState([]);
-  const [timerSec, setTimerSec] = useState(0);
+  const [timerMs, setTimerMs] = useState(0);
   const [running, setRunning] = useState(false);
   const [flash, setFlash] = useState(null);
+  const [timerEdit, setTimerEdit] = useState(null);
 
-  const timerRef = useRef(null);
-  const timerSecRef = useRef(0);
-  // Stack of { event, timerSecBefore } for proper undo
+  const timerMsRef = useRef(0);
+  // Stack of { event, timerMsBefore } for proper undo
   const historyRef = useRef([]);
 
   useEffect(() => {
-    timerSecRef.current = timerSec;
-  }, [timerSec]);
+    timerMsRef.current = timerMs;
+  }, [timerMs]);
 
   // Load session on mount
   useEffect(() => {
@@ -102,9 +121,13 @@ export default function TrackerPage() {
     setSelectedTeam(s.selectedTeam || "home");
     setSelectedJersey(s.selectedJersey || null);
     setEvents(s.events || []);
-    const t = s.timerSec || 0;
-    setTimerSec(t);
-    timerSecRef.current = t;
+    const t = typeof s.timerMs === "number"
+      ? s.timerMs
+      : typeof s.timerSec === "number"
+        ? s.timerSec * 1000
+        : 0;
+    setTimerMs(t);
+    timerMsRef.current = t;
     setLoaded(true);
   }, []);
 
@@ -116,35 +139,39 @@ export default function TrackerPage() {
       selectedTeam,
       selectedJersey,
       events,
-      timerSec,
+      timerMs,
     };
     saveSession(updated);
-  }, [selectedTeam, selectedJersey, events, timerSec, loaded]);
+  }, [selectedTeam, selectedJersey, events, timerMs, loaded]);
 
-  // Timer
+  // Timer — 10ms ticks, elapsed from wall clock so display stays aligned to ms
   useEffect(() => {
-    if (running) {
-      timerRef.current = setInterval(() => setTimerSec(s => s + 1), 1000);
-    } else {
-      clearInterval(timerRef.current);
-    }
-    return () => clearInterval(timerRef.current);
+    if (!running) return;
+    const startedAt = Date.now();
+    const baseMs = timerMsRef.current;
+    const id = setInterval(() => {
+      const next = baseMs + (Date.now() - startedAt);
+      setTimerMs(next);
+      timerMsRef.current = next;
+    }, 10);
+    return () => clearInterval(id);
   }, [running]);
 
   const logEvent = useCallback((eventKey) => {
-    const currentTimer = timerSecRef.current;
-    const timestamp = formatTime(currentTimer);
+    const currentTimer = timerMsRef.current;
+    const timestamp = formatTimeMs(currentTimer);
     const j = selectedJersey;
     const newEvent = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       timestamp,
-      timerSec: currentTimer,
+      timerMs: currentTimer,
+      timerSec: Math.floor(currentTimer / 1000),
       team: selectedTeam,
       jersey: j ? j.number : "",
       playerName: j ? (j.name || "") : "",
       event: eventKey,
     };
-    historyRef.current.push({ event: newEvent, timerSecBefore: currentTimer });
+    historyRef.current.push({ event: newEvent, timerMsBefore: currentTimer });
     setEvents(prev => [newEvent, ...prev]);
     setSelectedJersey(null);
     setFlash({ type: "event", team: selectedTeam, event: eventKey });
@@ -158,8 +185,9 @@ export default function TrackerPage() {
 
   const resetMatch = useCallback(() => {
     setRunning(false);
-    setTimerSec(0);
-    timerSecRef.current = 0;
+    setTimerMs(0);
+    timerMsRef.current = 0;
+    setTimerEdit(null);
     setEvents([]);
     historyRef.current = [];
     setSelectedJersey(null);
@@ -171,8 +199,25 @@ export default function TrackerPage() {
     if (historyRef.current.length === 0) return;
     const last = historyRef.current.pop();
     setEvents(prev => prev.filter(e => e.id !== last.event.id));
-    setTimerSec(last.timerSecBefore);
+    const prev = last.timerMsBefore ?? (typeof last.timerSecBefore === "number" ? last.timerSecBefore * 1000 : 0);
+    setTimerMs(prev);
+    timerMsRef.current = prev;
     setRunning(false); // pause after undo
+  }, []);
+
+  const commitTimerEdit = useCallback(() => {
+    if (timerEdit === null) return;
+    const parsed = parseTimeMs(timerEdit);
+    setTimerEdit(null);
+    if (parsed !== null && parsed >= 0) {
+      setTimerMs(parsed);
+      timerMsRef.current = parsed;
+    }
+  }, [timerEdit]);
+
+  const beginTimerEdit = useCallback(() => {
+    setRunning(false);
+    setTimerEdit(formatTimeMs(timerMsRef.current));
   }, []);
 
   // Keyboard shortcuts
@@ -293,12 +338,51 @@ export default function TrackerPage() {
         gap: 16, padding: "10px 20px", borderBottom: "1px solid #1a1a2a",
         background: "#0c0c14",
       }}>
-        <div style={{
-          fontSize: 42, fontWeight: 900, letterSpacing: 4,
-          color: running ? "#22c55e" : "#555",
-          fontVariantNumeric: "tabular-nums",
-          minWidth: 120, textAlign: "center",
-        }}>{formatTime(timerSec)}</div>
+        {timerEdit !== null ? (
+          <input
+            type="text"
+            value={timerEdit}
+            onChange={(e) => setTimerEdit(e.target.value)}
+            onBlur={commitTimerEdit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitTimerEdit();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setTimerEdit(null);
+              }
+            }}
+            spellCheck={false}
+            aria-label="Edit match time"
+            style={{
+              fontSize: 42, fontWeight: 900, letterSpacing: 2,
+              color: "#e5e5e5",
+              fontVariantNumeric: "tabular-nums",
+              minWidth: 280, width: 280, textAlign: "center",
+              background: "#111", border: "2px solid #3b82f6", borderRadius: 8,
+              padding: "4px 8px", fontFamily: "inherit", outline: "none",
+            }}
+            autoFocus
+          />
+        ) : (
+          <button
+            type="button"
+            title="Click to edit (MM:SS.mmm)"
+            onClick={beginTimerEdit}
+            style={{
+              fontSize: 42, fontWeight: 900, letterSpacing: 2,
+              color: running ? "#22c55e" : "#555",
+              fontVariantNumeric: "tabular-nums",
+              minWidth: 280, textAlign: "center",
+              background: "transparent", border: "none", cursor: "pointer",
+              fontFamily: "inherit", padding: "4px 8px",
+            }}
+          >
+            {formatTimeMs(timerMs)}
+          </button>
+        )}
 
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setRunning(r => !r)} style={{
@@ -464,7 +548,7 @@ export default function TrackerPage() {
                 background: i === 0 ? `${teamColor(ev.team)}15` : "transparent",
                 borderLeft: i === 0 ? `3px solid ${teamColor(ev.team)}` : "3px solid transparent",
               }}>
-                <span style={{ color: "#555", fontSize: 11, minWidth: 38, fontVariantNumeric: "tabular-nums" }}>{ev.timestamp}</span>
+                <span style={{ color: "#555", fontSize: 11, minWidth: 86, fontVariantNumeric: "tabular-nums" }}>{ev.timestamp}</span>
                 <span style={{
                   width: 8, height: 8, borderRadius: "50%",
                   background: teamColor(ev.team), flexShrink: 0,

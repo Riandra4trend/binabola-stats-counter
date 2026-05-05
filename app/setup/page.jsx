@@ -66,7 +66,7 @@ export default function SetupPage() {
       homeJerseys: validHome.map(p => ({ number: p.number.trim(), name: p.name.trim() })),
       awayJerseys: validAway.map(p => ({ number: p.number.trim(), name: p.name.trim() })),
       events: [],
-      timerSec: 0,
+      timerMs: 0,
       selectedTeam: "home",
       selectedJersey: null,
     };

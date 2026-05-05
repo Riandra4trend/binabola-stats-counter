@@ -175,7 +175,7 @@ export default function TrackerPage() {
     const mkId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
     const newest = eventsRef.current[0];
-    /** Home PASS ✓ then away PASS ✓ with no other event between → fix prior to PASS ✗ + away INTERCEPTION */
+    /** Home PASS ✓ then away PASS ✓ with no other event between → prior becomes PASS ✗, then away PASS ✓ */
     const shouldCorrectPass =
       newest &&
       newest.event === "PASS_SUCCESS" &&
@@ -192,16 +192,6 @@ export default function TrackerPage() {
         timerMs: origMs,
         timerSec: Math.floor(origMs / 1000),
       };
-      const interceptionEvent = {
-        id: mkId(),
-        timestamp,
-        timerMs: currentTimer,
-        timerSec: Math.floor(currentTimer / 1000),
-        team: "away",
-        jersey: j ? j.number : "",
-        playerName: j ? (j.name || "") : "",
-        event: "INTERCEPTION",
-      };
       const newPassEvent = {
         id: mkId(),
         timestamp,
@@ -215,7 +205,7 @@ export default function TrackerPage() {
       historyRef.current.push({
         kind: "passCorrection",
         timerMsBefore: currentTimer,
-        newEventIds: [newPassEvent.id, interceptionEvent.id],
+        newEventIds: [newPassEvent.id],
         correctedEventId: newest.id,
         previousCorrectedEvent: newest,
       });
@@ -236,7 +226,7 @@ export default function TrackerPage() {
           historyRef.current.push({ event: fallback, timerMsBefore: currentTimer });
           return [fallback, ...prev];
         }
-        return [newPassEvent, interceptionEvent, correctedFirst, ...prev.slice(1)];
+        return [newPassEvent, correctedFirst, ...prev.slice(1)];
       });
       setSelectedJersey(null);
       setRunning(true);

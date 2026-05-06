@@ -9,13 +9,14 @@ export default function SetupPage() {
   const router = useRouter();
 
   const [step, setStep] = useState("teams"); // "teams" | "jerseys"
-  const [homeTeam, setHomeTeam] = useState("HOME");
-  const [awayTeam, setAwayTeam] = useState("AWAY");
-  const [activeTab, setActiveTab] = useState("home"); // for jersey step
+  const [leftTeam, setLeftTeam] = useState("LEFT");
+  const [rightTeam, setRightTeam] = useState("RIGHT");
+  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [activeTab, setActiveTab] = useState("left"); // for jersey step
 
-  // jerseys: { home: [{ number, name }], away: [...] }
-  const [homeJerseys, setHomeJerseys] = useState([{ number: "", name: "" }]);
-  const [awayJerseys, setAwayJerseys] = useState([{ number: "", name: "" }]);
+  // jerseys: { left: [{ number, name }], right: [...] }
+  const [leftJerseys, setLeftJerseys] = useState([{ number: "", name: "" }]);
+  const [rightJerseys, setRightJerseys] = useState([{ number: "", name: "" }]);
 
   const [existingSession, setExistingSession] = useState(() => {
     if (typeof window !== "undefined") {
@@ -26,48 +27,49 @@ export default function SetupPage() {
   });
 
   const addPlayer = (team) => {
-    if (team === "home") {
-      if (homeJerseys.length >= MAX_PLAYERS) return;
-      setHomeJerseys(prev => [...prev, { number: "", name: "" }]);
+    if (team === "left") {
+      if (leftJerseys.length >= MAX_PLAYERS) return;
+      setLeftJerseys(prev => [...prev, { number: "", name: "" }]);
     } else {
-      if (awayJerseys.length >= MAX_PLAYERS) return;
-      setAwayJerseys(prev => [...prev, { number: "", name: "" }]);
+      if (rightJerseys.length >= MAX_PLAYERS) return;
+      setRightJerseys(prev => [...prev, { number: "", name: "" }]);
     }
   };
 
   const removePlayer = (team, idx) => {
-    if (team === "home") {
-      setHomeJerseys(prev => prev.filter((_, i) => i !== idx));
+    if (team === "left") {
+      setLeftJerseys(prev => prev.filter((_, i) => i !== idx));
     } else {
-      setAwayJerseys(prev => prev.filter((_, i) => i !== idx));
+      setRightJerseys(prev => prev.filter((_, i) => i !== idx));
     }
   };
 
   const updatePlayer = (team, idx, field, value) => {
-    if (team === "home") {
-      setHomeJerseys(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
+    if (team === "left") {
+      setLeftJerseys(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
     } else {
-      setAwayJerseys(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
+      setRightJerseys(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
     }
   };
 
   const handleContinueToJerseys = () => {
-    if (!homeTeam.trim() || !awayTeam.trim()) return;
+    if (!leftTeam.trim() || !rightTeam.trim()) return;
     setStep("jerseys");
   };
 
   const handleStartMatch = () => {
-    const validHome = homeJerseys.filter(p => p.number.trim() !== "");
-    const validAway = awayJerseys.filter(p => p.number.trim() !== "");
+    const validLeft = leftJerseys.filter(p => p.number.trim() !== "");
+    const validRight = rightJerseys.filter(p => p.number.trim() !== "");
 
     const sessionData = {
-      homeTeam: homeTeam.trim().toUpperCase(),
-      awayTeam: awayTeam.trim().toUpperCase(),
-      homeJerseys: validHome.map(p => ({ number: p.number.trim(), name: p.name.trim() })),
-      awayJerseys: validAway.map(p => ({ number: p.number.trim(), name: p.name.trim() })),
+      leftTeam: leftTeam.trim().toUpperCase(),
+      rightTeam: rightTeam.trim().toUpperCase(),
+      leftJerseys: validLeft.map(p => ({ number: p.number.trim(), name: p.name.trim() })),
+      rightJerseys: validRight.map(p => ({ number: p.number.trim(), name: p.name.trim() })),
+      youtubeUrl: youtubeUrl.trim(),
       events: [],
       timerMs: 0,
-      selectedTeam: "home",
+      selectedTeam: "left",
       selectedJersey: null,
     };
 
@@ -92,7 +94,7 @@ export default function SetupPage() {
           <div style={styles.badge}>SESSION FOUND</div>
           <h1 style={styles.title}>Match in Progress</h1>
           <p style={styles.subtitle}>
-            {existingSession.homeTeam} vs {existingSession.awayTeam}
+            {existingSession.leftTeam} vs {existingSession.rightTeam}
           </p>
           <p style={{ color: "#555", fontSize: 12, marginBottom: 32, letterSpacing: 1 }}>
             {existingSession.events?.length || 0} events logged
@@ -121,34 +123,43 @@ export default function SetupPage() {
 
           <div style={{ display: "flex", gap: 16, marginTop: 32, flexDirection: "column" }}>
             <div style={styles.fieldGroup}>
-              <label style={{ ...styles.label, color: "#3b82f6" }}>🏠 HOME TEAM</label>
+              <label style={{ ...styles.label, color: "#3b82f6" }}>🟦 LEFT</label>
               <input
                 style={{ ...styles.input, borderColor: "#3b82f6" }}
-                value={homeTeam}
-                onChange={e => setHomeTeam(e.target.value.toUpperCase())}
-                placeholder="HOME"
+                value={leftTeam}
+                onChange={e => setLeftTeam(e.target.value.toUpperCase())}
+                placeholder="LEFT"
                 maxLength={20}
               />
             </div>
             <div style={styles.fieldGroup}>
-              <label style={{ ...styles.label, color: "#ef4444" }}>✈️ AWAY TEAM</label>
+              <label style={{ ...styles.label, color: "#ef4444" }}>🟥 RIGHT</label>
               <input
                 style={{ ...styles.input, borderColor: "#ef4444" }}
-                value={awayTeam}
-                onChange={e => setAwayTeam(e.target.value.toUpperCase())}
-                placeholder="AWAY"
+                value={rightTeam}
+                onChange={e => setRightTeam(e.target.value.toUpperCase())}
+                placeholder="RIGHT"
                 maxLength={20}
+              />
+            </div>
+            <div style={styles.fieldGroup}>
+              <label style={{ ...styles.label, color: "#f59e0b" }}>📺 YOUTUBE LIVE URL (OPTIONAL)</label>
+              <input
+                style={{ ...styles.input, borderColor: "#f59e0b" }}
+                value={youtubeUrl}
+                onChange={e => setYoutubeUrl(e.target.value)}
+                placeholder="https://youtube.com/live/..."
               />
             </div>
           </div>
 
           <button
             onClick={handleContinueToJerseys}
-            disabled={!homeTeam.trim() || !awayTeam.trim()}
+            disabled={!leftTeam.trim() || !rightTeam.trim()}
             style={{
               ...styles.btnPrimary,
               marginTop: 32,
-              opacity: (!homeTeam.trim() || !awayTeam.trim()) ? 0.4 : 1,
+              opacity: (!leftTeam.trim() || !rightTeam.trim()) ? 0.4 : 1,
             }}
           >
             CONTINUE → JERSEY SETUP
@@ -159,9 +170,9 @@ export default function SetupPage() {
   }
 
   // ─── Step 2: Jersey Numbers ───
-  const jerseys = activeTab === "home" ? homeJerseys : awayJerseys;
-  const teamColor = activeTab === "home" ? "#3b82f6" : "#ef4444";
-  const teamLabel = activeTab === "home" ? homeTeam : awayTeam;
+  const jerseys = activeTab === "left" ? leftJerseys : rightJerseys;
+  const teamColor = activeTab === "left" ? "#3b82f6" : "#ef4444";
+  const teamLabel = activeTab === "left" ? leftTeam : rightTeam;
 
   return (
     <div style={styles.root}>
@@ -173,15 +184,15 @@ export default function SetupPage() {
 
         {/* Tab switcher */}
         <div style={{ display: "flex", marginTop: 24, gap: 0, borderRadius: 8, overflow: "hidden", border: "1px solid #2a2a3a" }}>
-          {["home", "away"].map(t => (
+          {["left", "right"].map(t => (
             <button key={t} onClick={() => setActiveTab(t)} style={{
               flex: 1, padding: "12px 0",
-              background: activeTab === t ? (t === "home" ? "#1d4ed8" : "#b91c1c") : "#111",
-              color: activeTab === t ? "#fff" : (t === "home" ? "#3b82f6" : "#ef4444"),
+              background: activeTab === t ? (t === "left" ? "#1d4ed8" : "#b91c1c") : "#111",
+              color: activeTab === t ? "#fff" : (t === "left" ? "#3b82f6" : "#ef4444"),
               border: "none", fontFamily: "inherit", fontWeight: 900,
               fontSize: 13, cursor: "pointer", letterSpacing: 2,
             }}>
-              {t === "home" ? homeTeam : awayTeam}
+              {t === "left" ? leftTeam : rightTeam}
             </button>
           ))}
         </div>

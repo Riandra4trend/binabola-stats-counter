@@ -2,32 +2,33 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { saveSession, loadSession, clearSession } from "@/lib/session";
+import { getYouTubeID } from "@/lib/youtube";
 
 /** Plain key + optional Shift (same letter). First-letter conflicts use iconic/alternate letters — see comments. */
 const EVENTS = {
   HIGH: [
-    { key: "PASS_SUCCESS", label: "PASS ✓", shortcutKey: "P", shortcutShift: false },
-    { key: "PASS_FAIL", label: "PASS ✗", shortcutKey: "P", shortcutShift: true },
-    { key: "INTERCEPTION", label: "INTERCEPT", shortcutKey: "I", shortcutShift: false },
-    { key: "TACKLE_SUCCESS", label: "TACKLE ✓", shortcutKey: "T", shortcutShift: false },
+    { key: "PASS_SUCCESS", label: "PASS SUCCESS", shortcutKey: "P", shortcutShift: false },
+    { key: "PASS_FAIL", label: "PASS FAIL", shortcutKey: "P", shortcutShift: true },
+    { key: "INTERCEPTION", label: "INTERCEPTION", shortcutKey: "I", shortcutShift: false },
+    { key: "TACKLE_SUCCESS", label: "TACKLE SUCCESS", shortcutKey: "T", shortcutShift: false },
   ],
   MEDIUM: [
     { key: "DRIVE", label: "DRIVE", shortcutKey: "D", shortcutShift: false },
-    { key: "DRIBBLE_SUCCESS", label: "DRIBBLE ✓", shortcutKey: "D", shortcutShift: true },
+    { key: "DRIBBLE_SUCCESS", label: "DRIBBLE SUCCESS", shortcutKey: "D", shortcutShift: true },
     { key: "CLEARANCE", label: "CLEARANCE", shortcutKey: "C", shortcutShift: false },
     { key: "BLOCK_SHOT", label: "BLOCK SHOT", shortcutKey: "B", shortcutShift: false },
   ],
   ATTACK: [
-    { key: "SHOT_ON_TARGET", label: "SHOT ON 🎯", shortcutKey: "S", shortcutShift: false },
-    { key: "SHOT_OFF_TARGET", label: "SHOT OFF", shortcutKey: "S", shortcutShift: true },
-    { key: "GOAL", label: "⚽ GOAL!", shortcutKey: "G", shortcutShift: false },
+    { key: "SHOT_ON_TARGET", label: "SHOT ON TARGET", shortcutKey: "S", shortcutShift: false },
+    { key: "SHOT_OFF_TARGET", label: "SHOT OFF TARGET", shortcutKey: "S", shortcutShift: true },
+    { key: "GOAL", label: "GOAL", shortcutKey: "G", shortcutShift: false },
   ],
   CROSS: [
     // "C" taken by CLEARANCE — X = cross
-    { key: "CROSS_SUCCESS", label: "CROSS ✓", shortcutKey: "X", shortcutShift: false },
-    { key: "CROSS_FAIL", label: "CROSS ✗", shortcutKey: "X", shortcutShift: true },
-    { key: "HIGH_PASS_SUCCESS", label: "HIGH PASS ✓", shortcutKey: "H", shortcutShift: false },
-    { key: "HIGH_PASS_FAIL", label: "HIGH PASS ✗", shortcutKey: "H", shortcutShift: true },
+    { key: "CROSS_SUCCESS", label: "CROSS SUCCESS", shortcutKey: "X", shortcutShift: false },
+    { key: "CROSS_FAIL", label: "CROSS FAIL", shortcutKey: "X", shortcutShift: true },
+    { key: "HIGH_PASS_SUCCESS", label: "HIGH PASS SUCCESS", shortcutKey: "H", shortcutShift: false },
+    { key: "HIGH_PASS_FAIL", label: "HIGH PASS FAIL", shortcutKey: "H", shortcutShift: true },
   ],
   SET: [
     { key: "FREE_KICK", label: "FREE KICK", shortcutKey: "F", shortcutShift: false },
@@ -35,7 +36,7 @@ const EVENTS = {
     { key: "CORNER", label: "CORNER", shortcutKey: "R", shortcutShift: false },
     { key: "THROW_IN", label: "THROW IN", shortcutKey: "W", shortcutShift: false },
     { key: "GOAL_KICK", label: "GOAL KICK", shortcutKey: "K", shortcutShift: false },
-    { key: "PENALTY_KICK", label: "PENALTY", shortcutKey: "N", shortcutShift: false },
+    { key: "PENALTY_KICK", label: "PENALTY KICK", shortcutKey: "N", shortcutShift: false },
     // "K" taken by GOAL_KICK — O = kickOff
     { key: "KICK_OFF", label: "KICK OFF", shortcutKey: "O", shortcutShift: false },
   ],
@@ -50,27 +51,39 @@ function shortcutLabel(ev) {
 
 function formatTimeMs(ms) {
   const total = Math.max(0, Math.floor(ms));
-  const m = Math.floor(total / 60000);
+  const h = Math.floor(total / 3600000);
+  const m = Math.floor((total % 3600000) / 60000);
   const s = Math.floor((total % 60000) / 1000);
   const milli = total % 1000;
-  const mm = m < 100 ? String(m).padStart(2, "0") : String(m);
-  return `${mm}:${String(s).padStart(2, "0")}.${String(milli).padStart(3, "0")}`;
+  
+  const hh = String(h).padStart(2, "0");
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  const mmm = String(milli).padStart(3, "0");
+  
+  return `${hh}:${mm}:${ss}.${mmm}`;
 }
 
 /** Parses MM:SS, MM:SS.m, MM:SS.mm, MM:SS.mmm */
 function parseTimeMs(str) {
   const trimmed = str.trim();
   if (!trimmed) return null;
-  const m = trimmed.match(/^(\d+):(\d{1,2})(?:\.(\d{0,3}))?$/);
+  // Matches HH:MM:SS.mmm or MM:SS.mmm
+  const m = trimmed.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:\.(\d{0,3}))?$/);
   if (!m) return null;
-  const min = parseInt(m[1], 10);
-  const sec = parseInt(m[2], 10);
-  if (sec > 59) return null;
+  
+  const hours = m[1] ? parseInt(m[1], 10) : 0;
+  const min = parseInt(m[2], 10);
+  const sec = parseInt(m[3], 10);
+  
+  if (min > 59 || sec > 59) return null;
+  
   let fracMs = 0;
-  if (m[3] != null && m[3] !== "") {
-    fracMs = parseInt(m[3].padEnd(3, "0").slice(0, 3), 10);
+  if (m[4] != null && m[4] !== "") {
+    fracMs = parseInt(m[4].padEnd(3, "0").slice(0, 3), 10);
   }
-  return min * 60 * 1000 + sec * 1000 + fracMs;
+  
+  return (hours * 3600 + min * 60 + sec) * 1000 + fracMs;
 }
 
 function eventTimerMs(ev) {
@@ -80,7 +93,22 @@ function eventTimerMs(ev) {
 }
 
 function downloadJSON(events) {
-  const blob = new Blob([JSON.stringify(events, null, 2)], { type: "application/json" });
+  const exportData = [...events]
+    .sort((a, b) => a.timerMs - b.timerMs)
+    .map(e => {
+      const item = {
+        gameTime: formatTimeMs(e.timerMs),
+        label: e.event,
+        position: String(Math.floor(e.timerMs)),
+        team: e.team, // already "left" or "right"
+      };
+      if (e.jersey) {
+        item.playerNumber = parseInt(e.jersey, 10);
+      }
+      return item;
+    });
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -89,19 +117,6 @@ function downloadJSON(events) {
   URL.revokeObjectURL(url);
 }
 
-function downloadCSV(events) {
-  const header = "timestamp,team,jersey,player,event\n";
-  const rows = events.map(e =>
-    `${e.timestamp},${e.team},${e.jersey || ""},${e.playerName || ""},${e.event}`
-  ).join("\n");
-  const blob = new Blob([header + rows], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "match_events.csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 export default function TrackerPage() {
   const router = useRouter();
@@ -109,25 +124,48 @@ export default function TrackerPage() {
   const [loaded, setLoaded] = useState(false);
 
   // Core state (loaded from session)
-  const [selectedTeam, setSelectedTeam] = useState("home");
+  const [selectedTeam, setSelectedTeam] = useState("left");
   const [selectedJersey, setSelectedJersey] = useState(null); // { number, name } | null
   const [events, setEvents] = useState([]);
   const [timerMs, setTimerMs] = useState(0);
   const [running, setRunning] = useState(false);
   const [flash, setFlash] = useState(null);
   const [timerEdit, setTimerEdit] = useState(null);
-
+  const [showStats, setShowStats] = useState(false);
+  
+  // YouTube State
+  const [videoId, setVideoId] = useState(null);
+  const [player, setPlayer] = useState(null);
+  const [streamStartTime, setStreamStartTime] = useState(null); // When "START" is clicked
+  const [isLive, setIsLive] = useState(false);
+  
   const timerMsRef = useRef(0);
   const eventsRef = useRef([]);
+  const runningRef = useRef(false);
+  const playerRef = useRef(null);
+  const streamStartTimeRef = useRef(null);
   // Stack: normal { event, timerMsBefore } or passCorrection { kind, ... }
   const historyRef = useRef([]);
+  const logContainerRef = useRef(null);
 
   useEffect(() => {
     timerMsRef.current = timerMs;
   }, [timerMs]);
 
   useEffect(() => {
+    streamStartTimeRef.current = streamStartTime;
+  }, [streamStartTime]);
+
+  useEffect(() => {
+    runningRef.current = running;
+  }, [running]);
+
+  useEffect(() => {
     eventsRef.current = events;
+    // Auto-scroll log to end on new event
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollLeft = logContainerRef.current.scrollWidth;
+    }
   }, [events]);
 
   // Load session on mount
@@ -138,7 +176,7 @@ export default function TrackerPage() {
       return;
     }
     setSession(s);
-    setSelectedTeam(s.selectedTeam || "home");
+    setSelectedTeam(s.selectedTeam || "left");
     setSelectedJersey(s.selectedJersey || null);
     setEvents(s.events || []);
     const t = typeof s.timerMs === "number"
@@ -148,6 +186,14 @@ export default function TrackerPage() {
         : 0;
     setTimerMs(t);
     timerMsRef.current = t;
+    
+    if (s.youtubeUrl) {
+      setVideoId(getYouTubeID(s.youtubeUrl));
+    }
+    if (typeof s.streamStartTime === "number") {
+      setStreamStartTime(s.streamStartTime);
+    }
+    
     setLoaded(true);
   }, []);
 
@@ -160,13 +206,79 @@ export default function TrackerPage() {
       selectedJersey,
       events,
       timerMs,
+      streamStartTime,
     };
     saveSession(updated);
-  }, [selectedTeam, selectedJersey, events, timerMs, loaded]);
+  }, [selectedTeam, selectedJersey, events, timerMs, loaded, streamStartTime]);
 
-  // Timer — 10ms ticks, elapsed from wall clock so display stays aligned to ms
+  // ── YouTube Player Mounting ──
+  useEffect(() => {
+    if (!videoId || typeof window === "undefined") return;
+    
+    const mountPlayer = () => {
+      if (!window.YT?.Player) return;
+      if (playerRef.current) {
+        playerRef.current.destroy();
+      }
+      playerRef.current = new window.YT.Player("youtube-player", {
+        height: "100%",
+        width: "100%",
+        videoId,
+        playerVars: { rel: 0, modestbranding: 1, autoplay: 0 },
+        events: {
+          onReady: () => {
+            setIsLive(true);
+          },
+          onStateChange: (event) => {
+            // event.data: -1 (unstarted), 0 (ended), 1 (playing), 2 (paused), 3 (buffering), 5 (video cued)
+            if (event.data === 1) setRunning(true);
+            if (event.data === 2) setRunning(false);
+          }
+        },
+      });
+      setPlayer(playerRef.current);
+    };
+
+    if (window.YT?.Player) {
+      mountPlayer();
+    } else {
+      window.onYouTubeIframeAPIReady = mountPlayer;
+      if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+        const script = document.createElement("script");
+        script.src = "https://www.youtube.com/iframe_api";
+        document.body.appendChild(script);
+      }
+    }
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
+    };
+  }, [videoId]);
+
+  // Timer — 10ms ticks
   useEffect(() => {
     if (!running) return;
+    
+    // If YouTube is active, poll the player
+    if (videoId) {
+      const id = setInterval(() => {
+        if (!playerRef.current?.getCurrentTime || typeof playerRef.current.getCurrentTime !== "function") return;
+        try {
+          const currentStreamTime = playerRef.current.getCurrentTime();
+          // Always show the live timer (stream duration)
+          const next = currentStreamTime * 1000;
+          setTimerMs(next);
+          timerMsRef.current = next;
+        } catch (err) {
+          // Fallback if poll fails
+        }
+      }, 100);
+      return () => clearInterval(id);
+    }
+
+    // Default Fallback: Wall clock timer
     const startedAt = Date.now();
     const baseMs = timerMsRef.current;
     const id = setInterval(() => {
@@ -175,7 +287,7 @@ export default function TrackerPage() {
       timerMsRef.current = next;
     }, 10);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, videoId, streamStartTime]);
 
   const logEvent = useCallback((eventKey) => {
     const currentTimer = timerMsRef.current;
@@ -197,8 +309,8 @@ export default function TrackerPage() {
       newest &&
       newest.event === "PASS_SUCCESS" &&
       newest.team !== selectedTeam &&
-      (newest.team === "home" || newest.team === "away") &&
-      (selectedTeam === "home" || selectedTeam === "away") &&
+      (newest.team === "left" || newest.team === "right") &&
+      (selectedTeam === "left" || selectedTeam === "right") &&
       (isOppositePassFollowUp || isOppositeInterceptionFollowUp);
 
     if (shouldCorrectPass) {
@@ -215,6 +327,7 @@ export default function TrackerPage() {
         timestamp,
         timerMs: currentTimer,
         timerSec: Math.floor(currentTimer / 1000),
+        streamTime: playerRef.current?.getCurrentTime() || null,
         team: selectedTeam,
         jersey: j ? j.number : "",
         playerName: j ? (j.name || "") : "",
@@ -236,6 +349,7 @@ export default function TrackerPage() {
             timestamp,
             timerMs: currentTimer,
             timerSec: Math.floor(currentTimer / 1000),
+            streamTime: playerRef.current?.getCurrentTime() || null,
             team: selectedTeam,
             jersey: j ? j.number : "",
             playerName: j ? (j.name || "") : "",
@@ -247,6 +361,9 @@ export default function TrackerPage() {
         return [loggedEvent, correctedFirst, ...prev.slice(1)];
       });
       setSelectedJersey(null);
+      if (videoId && playerRef.current) {
+        playerRef.current.playVideo?.();
+      }
       setRunning(true);
       setFlash({ type: "event", team: selectedTeam, event: eventKey });
       setTimeout(() => setFlash(null), 300);
@@ -258,6 +375,7 @@ export default function TrackerPage() {
       timestamp,
       timerMs: currentTimer,
       timerSec: Math.floor(currentTimer / 1000),
+      streamTime: playerRef.current?.getCurrentTime() || null, // Capture raw stream time
       team: selectedTeam,
       jersey: j ? j.number : "",
       playerName: j ? (j.name || "") : "",
@@ -267,6 +385,9 @@ export default function TrackerPage() {
     setEvents(prev => [newEvent, ...prev]);
     setSelectedJersey(null);
     // Paused → start clock; already running → leave running (never pause on event)
+    if (videoId && playerRef.current) {
+      playerRef.current.playVideo?.();
+    }
     setRunning(true);
     setFlash({ type: "event", team: selectedTeam, event: eventKey });
     setTimeout(() => setFlash(null), 300);
@@ -290,8 +411,9 @@ export default function TrackerPage() {
     setEvents([]);
     historyRef.current = [];
     setSelectedJersey(null);
-    setSelectedTeam("home");
+    setSelectedTeam("left");
     setFlash(null);
+    setStreamStartTime(null);
   }, []);
 
   const undo = useCallback(() => {
@@ -307,6 +429,12 @@ export default function TrackerPage() {
       const t = last.timerMsBefore ?? 0;
       setTimerMs(t);
       timerMsRef.current = t;
+      
+      if (videoId && playerRef.current) {
+        playerRef.current.pauseVideo?.();
+        playerRef.current.seekTo?.(t / 1000, true);
+      }
+      
       setRunning(false);
       return;
     }
@@ -314,8 +442,15 @@ export default function TrackerPage() {
     const prev = last.timerMsBefore ?? (typeof last.timerSecBefore === "number" ? last.timerSecBefore * 1000 : 0);
     setTimerMs(prev);
     timerMsRef.current = prev;
+    
+    // Seek and pause video back on undo
+    if (videoId && playerRef.current) {
+      playerRef.current.pauseVideo?.();
+      playerRef.current.seekTo?.(prev / 1000, true);
+    }
+    
     setRunning(false); // pause after undo
-  }, []);
+  }, [videoId]);
 
   const commitTimerEdit = useCallback(() => {
     if (timerEdit === null) return;
@@ -338,12 +473,22 @@ export default function TrackerPage() {
       if (e.target.tagName === "INPUT") return;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        setSelectedTeam("home");
+        setSelectedTeam("left");
         return;
       }
       if (e.key === "ArrowRight") {
         e.preventDefault();
-        setSelectedTeam("away");
+        setSelectedTeam("right");
+        return;
+      }
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        const isRunning = runningRef.current;
+        if (videoId && playerRef.current) {
+          if (isRunning) playerRef.current.pauseVideo?.();
+          else playerRef.current.playVideo?.();
+        }
+        setRunning(!isRunning);
         return;
       }
 
@@ -391,342 +536,359 @@ export default function TrackerPage() {
   }
 
   // Stats
-  const statsHome = {};
-  const statsAway = {};
-  let scoreHome = 0, scoreAway = 0;
+  const statsLeft = {};
+  const statsRight = {};
+  let scoreLeft = 0, scoreRight = 0;
   events.forEach(e => {
-    const target = e.team === "home" ? statsHome : statsAway;
+    const target = e.team === "left" ? statsLeft : statsRight;
     target[e.event] = (target[e.event] || 0) + 1;
     if (e.event === "GOAL") {
-      if (e.team === "home") scoreHome++;
-      else scoreAway++;
+      if (e.team === "left") scoreLeft++;
+      else scoreRight++;
     }
   });
 
-  const teamColor = (team) => team === "home" ? "#3b82f6" : "#ef4444";
-  const teamName = (team) => team === "home" ? session.homeTeam : session.awayTeam;
-  const currentJerseys = selectedTeam === "home" ? session.homeJerseys : session.awayJerseys;
+  const teamColor = (team) => team === "left" ? "#3b82f6" : "#ef4444";
+  const teamName = (team) => team === "left" ? session.leftTeam : session.rightTeam;
+  const currentJerseys = selectedTeam === "left" ? session.leftJerseys : session.rightJerseys;
+
+  // ── Stats Calculation ──
+  const calcStats = () => {
+    const s = {
+      left: { goals: 0, actions: 0, onTarget: 0, offTarget: 0, blockedByOpp: 0, passOk: 0, passFail: 0, dribbleOk: 0, def: 0 },
+      right: { goals: 0, actions: 0, onTarget: 0, offTarget: 0, blockedByOpp: 0, passOk: 0, passFail: 0, dribbleOk: 0, def: 0 }
+    };
+
+    events.forEach(e => {
+      const t = e.team; // "left" or "right"
+      const opp = t === "left" ? "right" : "left";
+      s[t].actions++;
+
+      if (e.event === "GOAL") s[t].goals++;
+      if (e.event === "SHOT_ON_TARGET") s[t].onTarget++;
+      if (e.event === "SHOT_OFF_TARGET") s[t].offTarget++;
+      if (e.event === "BLOCK_SHOT") {
+        s[t].def++;
+        s[opp].blockedByOpp++;
+      }
+      if (e.event === "PASS_SUCCESS" || e.event === "HIGH_PASS_SUCCESS") s[t].passOk++;
+      if (e.event === "PASS_FAIL" || e.event === "HIGH_PASS_FAIL") s[t].passFail++;
+      if (e.event === "DRIBBLE_SUCCESS") s[t].dribbleOk++;
+      if (e.event === "INTERCEPTION" || e.event === "TACKLE_SUCCESS" || e.event === "CLEARANCE") s[t].def++;
+    });
+
+    const totalActions = s.left.actions + s.right.actions || 1;
+    const lShots = s.left.onTarget + s.left.offTarget + s.right.blockedByOpp;
+    const rShots = s.right.onTarget + s.right.offTarget + s.left.blockedByOpp;
+    const lPassAtt = s.left.passOk + s.left.passFail;
+    const rPassAtt = s.right.passOk + s.right.passFail;
+
+    const fmtPct = (num, den) => den === 0 ? "0%" : `${Math.round((num / den) * 100)}%`;
+    
+    // Ensure possession sums to 100%
+    const lPoss = Math.round((s.left.actions / totalActions) * 100);
+    const rPoss = 100 - lPoss;
+
+    return [
+      { label: "Goals", left: s.left.goals, right: s.right.goals },
+      { label: "Possession", left: `${lPoss}%`, right: `${rPoss}%` },
+      { label: "Total Shots", left: lShots, right: rShots },
+      { label: "Shot Accuracy", left: fmtPct(s.left.onTarget, s.left.onTarget + s.left.offTarget), right: fmtPct(s.right.onTarget, s.right.onTarget + s.right.offTarget) },
+      { label: "Pass Attempts", left: lPassAtt, right: rPassAtt },
+      { label: "Pass Accuracy", left: fmtPct(s.left.passOk, lPassAtt), right: fmtPct(s.right.passOk, rPassAtt) },
+      { label: "Successful Dribbles", left: s.left.dribbleOk, right: s.right.dribbleOk },
+      { label: "Defensive Actions", left: s.left.def, right: s.right.def },
+    ];
+  };
 
   const isGoalFlash = flash?.type === "event" && flash?.event === "GOAL";
 
   return (
     <div style={{
-      minHeight: "100vh",
-      background: "#0a0a0f",
-      color: "#f0f0f0",
-      fontFamily: "'IBM Plex Mono', 'Fira Code', monospace",
-      position: "relative",
-      overflow: "hidden",
-    }}>
-      {/* Goal flash overlay */}
-      {isGoalFlash && (
+        display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden"
+      }}>
+        {/* Header - Compact Score & Status */}
         <div style={{
-          position: "fixed", inset: 0, zIndex: 999,
-          background: `${teamColor(flash.team)}22`,
-          border: `4px solid ${teamColor(flash.team)}`,
-          pointerEvents: "none",
-          animation: "goalFlash 0.3s ease",
-        }} />
-      )}
-
-      {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 20px", borderBottom: "1px solid #222",
-        background: "#0d0d14", gap: 12,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
-          <span style={{ fontSize: 20, fontWeight: 900, color: "#3b82f6", letterSpacing: 2 }}>
-            {session.homeTeam}
-          </span>
-        </div>
-
-        {/* Scoreboard */}
-        <div style={{
-          display: "flex", alignItems: "center",
-          background: "#111", border: "1px solid #2a2a3a",
-          borderRadius: 8, overflow: "hidden",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "8px 20px", borderBottom: "1px solid #222",
+          background: "#0d0d14", gap: 12, height: 60, flexShrink: 0,
         }}>
-          <div style={{
-            fontSize: 36, fontWeight: 900, padding: "6px 20px",
-            color: "#3b82f6", borderRight: "1px solid #2a2a3a",
-            minWidth: 60, textAlign: "center",
-          }}>{scoreHome}</div>
-          <div style={{ fontSize: 13, padding: "0 12px", color: "#555", letterSpacing: 1 }}>VS</div>
-          <div style={{
-            fontSize: 36, fontWeight: 900, padding: "6px 20px",
-            color: "#ef4444", borderLeft: "1px solid #2a2a3a",
-            minWidth: 60, textAlign: "center",
-          }}>{scoreAway}</div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, justifyContent: "flex-end" }}>
-          <span style={{ fontSize: 20, fontWeight: 900, color: "#ef4444", letterSpacing: 2 }}>
-            {session.awayTeam}
-          </span>
-        </div>
-      </div>
-
-      {/* Timer + Controls */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
-        gap: 16, padding: "10px 20px", borderBottom: "1px solid #1a1a2a",
-        background: "#0c0c14",
-      }}>
-        {timerEdit !== null ? (
-          <input
-            type="text"
-            value={timerEdit}
-            onChange={(e) => setTimerEdit(e.target.value)}
-            onBlur={commitTimerEdit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitTimerEdit();
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setTimerEdit(null);
-              }
-            }}
-            spellCheck={false}
-            aria-label="Edit match time"
-            style={{
-              fontSize: 42, fontWeight: 900, letterSpacing: 2,
-              color: "#e5e5e5",
-              fontVariantNumeric: "tabular-nums",
-              minWidth: 280, width: 280, textAlign: "center",
-              background: "#111", border: "2px solid #3b82f6", borderRadius: 8,
-              padding: "4px 8px", fontFamily: "inherit", outline: "none",
-            }}
-            autoFocus
-          />
-        ) : (
-          <button
-            type="button"
-            title="Click to edit (MM:SS.mmm)"
-            onClick={beginTimerEdit}
-            style={{
-              fontSize: 42, fontWeight: 900, letterSpacing: 2,
-              color: running ? "#22c55e" : "#555",
-              fontVariantNumeric: "tabular-nums",
-              minWidth: 280, textAlign: "center",
-              background: "transparent", border: "none", cursor: "pointer",
-              fontFamily: "inherit", padding: "4px 8px",
-            }}
-          >
-            {formatTimeMs(timerMs)}
-          </button>
-        )}
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setRunning(r => !r)} style={{
-            padding: "10px 22px", borderRadius: 6, border: "none",
-            background: running ? "#166534" : "#15803d",
-            color: "#fff", fontFamily: "inherit", fontWeight: 700,
-            fontSize: 13, cursor: "pointer", letterSpacing: 1,
-          }}>{running ? "⏸ PAUSE" : "▶ START"}</button>
-          <button onClick={resetMatch} style={{
-            padding: "10px 16px", borderRadius: 6, border: "1px solid #333",
-            background: "#1a1a2a", color: "#888", fontFamily: "inherit",
-            fontWeight: 700, fontSize: 13, cursor: "pointer",
-          }}>↺ RESET</button>
-          <button onClick={undo} style={{
-            padding: "10px 16px", borderRadius: 6, border: "1px solid #333",
-            background: "#1a1a2a", color: "#f59e0b", fontFamily: "inherit",
-            fontWeight: 700, fontSize: 13, cursor: "pointer",
-          }}>⎌ UNDO</button>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>
-          <button onClick={() => downloadJSON(events)} style={{
-            padding: "8px 14px", borderRadius: 6, border: "1px solid #2a2a3a",
-            background: "transparent", color: "#666", fontFamily: "inherit",
-            fontSize: 11, cursor: "pointer", letterSpacing: 1,
-          }}>↓ JSON</button>
-          <button onClick={() => downloadCSV(events)} style={{
-            padding: "8px 14px", borderRadius: 6, border: "1px solid #2a2a3a",
-            background: "transparent", color: "#666", fontFamily: "inherit",
-            fontSize: 11, cursor: "pointer", letterSpacing: 1,
-          }}>↓ CSV</button>
-          <button onClick={() => { clearSession(); router.push("/setup"); }} style={{
-            padding: "8px 14px", borderRadius: 6, border: "1px solid #3a1a1a",
-            background: "transparent", color: "#7f1d1d", fontFamily: "inherit",
-            fontSize: 11, cursor: "pointer", letterSpacing: 1,
-          }}>✕ END</button>
-        </div>
-      </div>
-
-      {/* Team Selector */}
-      <div style={{
-        display: "flex", gap: 0, padding: "12px 20px",
-        borderBottom: "1px solid #1a1a2a", background: "#0e0e18",
-      }}>
-        <button onClick={() => { setSelectedTeam("home"); setSelectedJersey(null); }} style={{
-          flex: 1, padding: "14px 0", border: "none", borderRadius: "8px 0 0 8px",
-          background: selectedTeam === "home" ? "#1d4ed8" : "#111",
-          color: selectedTeam === "home" ? "#fff" : "#3b82f6",
-          fontFamily: "inherit", fontWeight: 900, fontSize: 16,
-          cursor: "pointer", letterSpacing: 2,
-          borderRight: "2px solid #0a0a0f",
-          transition: "all 0.1s",
-          boxShadow: selectedTeam === "home" ? "0 0 20px #3b82f688" : "none",
-        }}>
-          [←] ◀ {session.homeTeam}
-        </button>
-        <button onClick={() => { setSelectedTeam("away"); setSelectedJersey(null); }} style={{
-          flex: 1, padding: "14px 0", border: "none", borderRadius: "0 8px 8px 0",
-          background: selectedTeam === "away" ? "#b91c1c" : "#111",
-          color: selectedTeam === "away" ? "#fff" : "#ef4444",
-          fontFamily: "inherit", fontWeight: 900, fontSize: 16,
-          cursor: "pointer", letterSpacing: 2,
-          borderLeft: "2px solid #0a0a0f",
-          transition: "all 0.1s",
-          boxShadow: selectedTeam === "away" ? "0 0 20px #ef444488" : "none",
-        }}>
-          {session.awayTeam} ▶ [→]
-        </button>
-      </div>
-
-      {/* Main layout */}
-      <div style={{ display: "flex", height: "calc(100vh - 240px)", minHeight: 400 }}>
-        {/* Event Buttons */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", borderRight: "1px solid #1a1a2a" }}>
-          {/* Event sections */}
-          <SectionLabel label="HIGH FREQUENCY" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
-            {EVENTS.HIGH.map(ev => (
-              <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} size="large" />
-            ))}
-          </div>
-
-          <SectionLabel label="MEDIUM" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginBottom: 14 }}>
-            {EVENTS.MEDIUM.map(ev => (
-              <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} size="medium" />
-            ))}
-          </div>
-
-          <SectionLabel label="ATTACKING" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7, marginBottom: 14 }}>
-            {EVENTS.ATTACK.map(ev => (
-              <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)}
-                size={ev.key === "GOAL" ? "goal" : "medium"} />
-            ))}
-          </div>
-
-          <SectionLabel label="CROSS & PASSING" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginBottom: 14 }}>
-            {EVENTS.CROSS.map(ev => (
-              <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} size="medium" />
-            ))}
-          </div>
-
-          <SectionLabel label="SET PIECES" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 14 }}>
-            {EVENTS.SET.map(ev => (
-              <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} size="small" />
-            ))}
-          </div>
-        </div>
-
-        {/* Right panel: Stats + Log */}
-        <div style={{ width: 300, display: "flex", flexDirection: "column", background: "#0c0c14" }}>
-          {/* Mini stats */}
-          <div style={{
-            padding: "10px 14px", borderBottom: "1px solid #1a1a2a",
-            display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 4,
-            fontSize: 10, color: "#666", letterSpacing: 1,
-          }}>
-            {["PASSES", "SHOTS", "INTERCEPTIONS", "TACKLES"].map(stat => {
-              const lKey = stat === "PASSES" ? ["PASS_SUCCESS", "PASS_FAIL"] :
-                stat === "SHOTS" ? ["SHOT_ON_TARGET", "SHOT_OFF_TARGET", "GOAL"] :
-                stat === "INTERCEPTIONS" ? ["INTERCEPTION"] : ["TACKLE_SUCCESS"];
-              const lVal = lKey.reduce((a, k) => a + (statsHome[k] || 0), 0);
-              const rVal = lKey.reduce((a, k) => a + (statsAway[k] || 0), 0);
-              return [
-                <div key={`l${stat}`} style={{ color: "#3b82f6", fontWeight: 700, fontSize: 13, textAlign: "right" }}>{lVal}</div>,
-                <div key={`m${stat}`} style={{ textAlign: "center", color: "#444" }}>{stat}</div>,
-                <div key={`r${stat}`} style={{ color: "#ef4444", fontWeight: 700, fontSize: 13 }}>{rVal}</div>,
-              ];
-            })}
-          </div>
-
-          <div style={{
-            padding: "10px 14px 0",
-            borderBottom: "1px solid #1a1a2a",
-            flexShrink: 0,
-          }}>
-            <JerseySelector
-              jerseys={currentJerseys}
-              selected={selectedJersey}
-              onSelect={setSelectedJersey}
-              teamColor={teamColor(selectedTeam)}
-              teamName={teamName(selectedTeam)}
-            />
-          </div>
-
-          {/* Event log */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "8px 0", minHeight: 0 }}>
-            <div style={{ padding: "4px 14px 8px", fontSize: 10, color: "#444", letterSpacing: 2 }}>
-              EVENT LOG ({events.length})
-            </div>
-            {events.length === 0 && (
-              <div style={{ padding: "20px 14px", color: "#333", fontSize: 12, textAlign: "center" }}>
-                No events yet.<br />Pick a side, optionally a jersey, then tap an event.
+          <div style={{ display: "flex", alignItems: "center", gap: 15, flex: 1 }}>
+            <span style={{ fontSize: 24, fontWeight: 900, color: "#3b82f6", letterSpacing: 1 }}>
+              {session.leftTeam}
+            </span>
+            <div style={{
+              fontSize: 32, fontWeight: 900, width: 60, height: 50,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "#111", border: "1px solid #2a2a3a", borderRadius: 8,
+              color: "#3b82f6",
+            }}>{scoreLeft}</div>
+            
+            {videoId && (
+              <div style={{
+                fontSize: 9, color: player ? "#22c55e" : "#555",
+                display: "flex", alignItems: "center", gap: 4,
+                fontWeight: 700, letterSpacing: 1, marginLeft: 10
+              }}>
+                <span style={{
+                  width: 5, height: 5, borderRadius: "50%",
+                  background: player ? "#22c55e" : "#555",
+                }} />
+                {player ? "SYNCED" : "OFFLINE"}
               </div>
             )}
-            {events.map((ev, i) => (
-              <div key={ev.id} style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "5px 8px 5px 14px",
-                background: i === 0 ? `${teamColor(ev.team)}15` : "transparent",
-                borderLeft: i === 0 ? `3px solid ${teamColor(ev.team)}` : "3px solid transparent",
-              }}>
-                <span style={{ color: "#555", fontSize: 11, minWidth: 86, fontVariantNumeric: "tabular-nums" }}>{ev.timestamp}</span>
-                <span style={{
-                  width: 8, height: 8, borderRadius: "50%",
-                  background: teamColor(ev.team), flexShrink: 0,
-                }} />
-                {ev.jersey ? (
-                  <span style={{
-                    fontSize: 10, color: teamColor(ev.team), fontWeight: 700,
-                    minWidth: 24, textAlign: "center",
-                    background: `${teamColor(ev.team)}22`,
-                    borderRadius: 4, padding: "1px 5px",
-                  }}>#{ev.jersey}</span>
-                ) : (
-                  <span style={{
-                    fontSize: 9, color: "#444", fontWeight: 600,
-                    minWidth: 24, textAlign: "center",
-                    letterSpacing: 0.5,
-                  }}>—</span>
-                )}
-                <span style={{ fontSize: 11, color: "#ccc", letterSpacing: 0.5, flex: 1, minWidth: 0 }}>{ev.event}</span>
-                <button
-                  type="button"
-                  title="Remove this log"
-                  onClick={() => removeEventById(ev.id)}
-                  style={{
-                    flexShrink: 0,
-                    padding: "2px 6px",
-                    border: "1px solid #2a2a3a",
-                    borderRadius: 4,
-                    background: "#151520",
-                    color: "#555",
-                    fontFamily: "inherit",
-                    fontSize: 11,
-                    cursor: "pointer",
-                    lineHeight: 1,
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <button 
+              onClick={() => setShowStats(true)}
+              style={{
+                fontSize: 10, color: "#3b82f6", background: "rgba(59, 130, 246, 0.1)",
+                border: "1px solid rgba(59, 130, 246, 0.3)", borderRadius: 4,
+                padding: "2px 8px", cursor: "pointer", fontWeight: 700, letterSpacing: 1,
+                marginBottom: 4, transition: "all 0.2s"
+              }}
+              onMouseEnter={e => e.target.style.background = "rgba(59, 130, 246, 0.2)"}
+              onMouseLeave={e => e.target.style.background = "rgba(59, 130, 246, 0.1)"}
+            >
+              📊 LIVE STATS
+            </button>
+            <div style={{ fontSize: 10, color: "#444", letterSpacing: 2 }}>MATCH TIME</div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, justifyContent: "flex-end" }}>
+            <div style={{
+              fontSize: 24, fontWeight: 900, padding: "2px 12px",
+              background: "#111", border: "1px solid #2a2a3a", borderRadius: 6,
+              color: "#ef4444", minWidth: 40, textAlign: "center",
+            }}>{scoreRight}</div>
+            <span style={{ fontSize: 18, fontWeight: 900, color: "#ef4444", letterSpacing: 1 }}>
+              {session.rightTeam}
+            </span>
           </div>
         </div>
-      </div>
+
+        {/* Main Work Area */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          
+          {/* Left Column: Video + Primary Controls */}
+          <div style={{ flex: 7, display: "flex", flexDirection: "column", borderRight: "1px solid #1a1a2a", minWidth: 0 }}>
+            {/* Large Video Player */}
+            <div style={{ flex: 1, background: "#000", position: "relative" }}>
+              {videoId ? (
+                <div id="youtube-player" style={{ width: "100%", height: "100%" }} />
+              ) : (
+                <div style={{
+                  height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+                  color: "#333", fontSize: 14, fontStyle: "italic"
+                }}>
+                  No video provided in setup
+                </div>
+              )}
+            </div>
+
+            {/* Timer & Playback Controls Bar */}
+            <div style={{
+              padding: "16px 24px", background: "#0c0c14", borderTop: "1px solid #1a1a2a",
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20
+            }}>
+              {timerEdit !== null ? (
+                <input
+                  type="text"
+                  value={timerEdit}
+                  onChange={(e) => setTimerEdit(e.target.value)}
+                  onBlur={commitTimerEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); commitTimerEdit(); }
+                    if (e.key === "Escape") { e.preventDefault(); setTimerEdit(null); }
+                  }}
+                  style={{
+                    fontSize: 48, fontWeight: 900, letterSpacing: 2, color: "#e5e5e5",
+                    fontVariantNumeric: "tabular-nums", width: 340, textAlign: "center",
+                    background: "#111", border: "2px solid #3b82f6", borderRadius: 12,
+                    padding: "4px 12px", fontFamily: "inherit", outline: "none",
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <button
+                  onClick={beginTimerEdit}
+                  style={{
+                    fontSize: 48, fontWeight: 900, letterSpacing: 2,
+                    color: running ? "#22c55e" : "#555",
+                    fontVariantNumeric: "tabular-nums", minWidth: 340, textAlign: "center",
+                    background: "transparent", border: "none", cursor: "pointer",
+                    fontFamily: "inherit", padding: "4px 12px",
+                  }}
+                >
+                  {formatTimeMs(timerMs)}
+                </button>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => {
+                  if (videoId && playerRef.current) {
+                    if (running) playerRef.current.pauseVideo?.();
+                    else playerRef.current.playVideo?.();
+                  }
+                  setRunning(r => !r);
+                }} style={{
+                  padding: "12px 24px", borderRadius: 8, border: "none",
+                  background: running ? "#166534" : "#15803d",
+                  color: "#fff", fontFamily: "inherit", fontWeight: 700,
+                  fontSize: 14, cursor: "pointer", letterSpacing: 1, minWidth: 120,
+                }}>{running ? "⏸ PAUSE" : "▶ START"}</button>
+                
+                <button onClick={() => {
+                  if (playerRef.current?.seekTo) {
+                    const next = Math.max(0, playerRef.current.getCurrentTime() - 5);
+                    playerRef.current.seekTo(next, true);
+                  }
+                }} style={{
+                  padding: "12px 18px", borderRadius: 8, border: "1px solid #3b82f6",
+                  background: "#1e3a8a", color: "#fff", fontFamily: "inherit",
+                  fontWeight: 700, fontSize: 14, cursor: "pointer",
+                }}>-5s</button>
+                
+                <button onClick={() => {
+                  if (playerRef.current?.seekTo) {
+                    const next = playerRef.current.getCurrentTime() + 5;
+                    playerRef.current.seekTo(next, true);
+                  }
+                }} style={{
+                  padding: "12px 18px", borderRadius: 8, border: "1px solid #3b82f6",
+                  background: "#1e3a8a", color: "#fff", fontFamily: "inherit",
+                  fontWeight: 700, fontSize: 14, cursor: "pointer",
+                }}>+5s</button>
+
+                <button onClick={undo} style={{
+                  padding: "12px 18px", borderRadius: 8, border: "1px solid #333",
+                  background: "#1a1a2a", color: "#f59e0b", fontFamily: "inherit",
+                  fontWeight: 700, fontSize: 14, cursor: "pointer",
+                }}>⎌ UNDO</button>
+              </div>
+            </div>
+
+            {/* Event Log (Horizontal Strip) - Chronological Order (Oldest to Newest) */}
+            <div 
+              ref={logContainerRef}
+              style={{
+                height: 110, overflowX: "auto", display: "flex", gap: 12,
+                padding: "0 24px", background: "#0a0a0f", borderTop: "1px solid #1a1a2a",
+                alignItems: "center", flexShrink: 0
+              }}
+            >
+              {events.length === 0 ? (
+                <div style={{ color: "#333", fontSize: 12, fontStyle: "italic" }}>No events logged yet</div>
+              ) : [...events].sort((a, b) => a.timerMs - b.timerMs).map((ev, i) => (
+                <div key={ev.id} style={{
+                  flexShrink: 0, padding: "10px 14px", background: "#111",
+                  border: "1.5px solid #222", borderRadius: 10,
+                  display: "flex", flexDirection: "column", gap: 3, minWidth: 160, position: "relative",
+                  transition: "all 0.2s"
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 10, color: "#666", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ev.timestamp.split('.')[0]}</span>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: teamColor(ev.team), boxShadow: `0 0 8px ${teamColor(ev.team)}88` }} />
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: "#ccc", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {ev.jersey && <span style={{ color: teamColor(ev.team), marginRight: 6 }}>#{ev.jersey}</span>}
+                    {ev.event.replace(/_/g, ' ')}
+                  </div>
+                  <button onClick={() => removeEventById(ev.id)} style={{
+                    position: "absolute", top: -8, right: -8, width: 22, height: 22,
+                    background: "#7f1d1d", color: "#fff", border: "2px solid #0a0a0f", borderRadius: "50%",
+                    fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.5)"
+                  }}>×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right Column: Team Selection + Event Buttons */}
+          <div style={{ flex: 3, display: "flex", flexDirection: "column", background: "#0e0e18", minWidth: 0 }}>
+            {/* Team Selection Tabs */}
+            <div style={{ display: "flex", borderBottom: "1px solid #1a1a2a" }}>
+              <button onClick={() => { setSelectedTeam("left"); setSelectedJersey(null); }} style={{
+                flex: 1, padding: "16px 0", border: "none",
+                background: selectedTeam === "left" ? "#1d4ed8" : "transparent",
+                color: "#fff", fontFamily: "inherit", fontWeight: 900, fontSize: 14, cursor: "pointer", letterSpacing: 1,
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4
+              }}>
+                <span>{session.leftTeam}</span>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 700 }}>[← ARROW]</span>
+              </button>
+              <button onClick={() => { setSelectedTeam("right"); setSelectedJersey(null); }} style={{
+                flex: 1, padding: "16px 0", border: "none",
+                background: selectedTeam === "right" ? "#b91c1c" : "transparent",
+                color: "#fff", fontFamily: "inherit", fontWeight: 900, fontSize: 14, cursor: "pointer", letterSpacing: 1,
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4
+              }}>
+                <span>{session.rightTeam}</span>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 700 }}>[→ ARROW]</span>
+              </button>
+            </div>
+
+            {/* Jersey Selector - Compact */}
+            <div style={{ padding: "10px 12px", borderBottom: "1px solid #1a1a2a" }}>
+              <JerseySelector
+                jerseys={currentJerseys}
+                selected={selectedJersey}
+                onSelect={setSelectedJersey}
+                teamColor={teamColor(selectedTeam)}
+                teamName={teamName(selectedTeam)}
+              />
+            </div>
+
+            {/* Event Buttons Grid - Scrollable */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+              <SectionLabel label="HIGH FREQUENCY" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+                {EVENTS.HIGH.map(ev => (
+                  <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} size="large" />
+                ))}
+              </div>
+
+              <SectionLabel label="ATTACKING & GOALS" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+                {EVENTS.ATTACK.map(ev => (
+                  <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} 
+                    size={ev.key === "GOAL" ? "goal" : "medium"} />
+                ))}
+              </div>
+
+              <SectionLabel label="GENERAL PLAY" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
+                {[...EVENTS.MEDIUM, ...EVENTS.CROSS].map(ev => (
+                  <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} size="medium" />
+                ))}
+              </div>
+
+              <SectionLabel label="SET PIECES" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                {EVENTS.SET.map(ev => (
+                  <EventBtn key={ev.key} ev={ev} team={selectedTeam} flash={flash} onClick={() => logEvent(ev.key)} size="small" />
+                ))}
+              </div>
+            </div>
+
+            {/* Export Actions Bar */}
+            <div style={{
+              padding: "12px 16px", background: "#0d0d14", borderTop: "1px solid #1a1a2a",
+              display: "flex", justifyContent: "space-between", gap: 8
+            }}>
+              <button onClick={() => downloadJSON(events)} style={{ flex: 1, padding: "8px 0", borderRadius: 4, background: "#111", border: "1px solid #222", color: "#666", fontSize: 10, cursor: "pointer" }}>EXPORT JSON</button>
+              <button onClick={() => {
+                if (window.confirm("End match session? This will auto-export your JSON and clear all data.")) {
+                  downloadJSON(events);
+                  clearSession();
+                  router.push("/setup");
+                }
+              }} style={{ flex: 1, padding: "8px 0", borderRadius: 4, background: "#450a0a", border: "1px solid #7f1d1d", color: "#fca5a5", fontSize: 10, fontWeight: 900, cursor: "pointer" }}>END SESSION</button>
+            </div>
+          </div>
+        </div>
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700;900&display=swap');
@@ -737,7 +899,58 @@ export default function TrackerPage() {
         @keyframes goalFlash { 0%,100% { opacity:0; } 50% { opacity:1; } }
         @keyframes btnPop { 0% { transform: scale(1); } 50% { transform: scale(0.94); } 100% { transform: scale(1); } }
         @keyframes shake { 0%,100% { transform: translateX(0); } 20%,60% { transform: translateX(-6px); } 40%,80% { transform: translateX(6px); } }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
+
+      {/* Stats Modal */}
+      {showStats && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 2000,
+          display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)"
+        }} onClick={() => setShowStats(false)}>
+          <div style={{
+            background: "#0d0d14", border: "1px solid #2a2a3a", borderRadius: 16,
+            width: "90%", maxWidth: 500, padding: 30, animation: "modalIn 0.3s ease-out"
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 900, letterSpacing: 2 }}>MATCH STATISTICS</h2>
+              <button onClick={() => setShowStats(false)} style={{
+                background: "none", border: "none", color: "#555", fontSize: 24, cursor: "pointer"
+              }}>×</button>
+            </div>
+            
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #1a1a2a" }}>
+                  <th style={{ textAlign: "left", padding: "12px 8px", color: "#444", fontSize: 10 }}>STATISTIC</th>
+                  <th style={{ textAlign: "center", padding: "12px 8px", color: "#3b82f6", fontSize: 12 }}>{session.leftTeam}</th>
+                  <th style={{ textAlign: "center", padding: "12px 8px", color: "#ef4444", fontSize: 12 }}>{session.rightTeam}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {calcStats().map((row, i) => (
+                  <tr key={i} style={{ borderBottom: "1px solid #111" }}>
+                    <td style={{ padding: "14px 8px", fontSize: 13, color: "#888", fontWeight: 700 }}>{row.label}</td>
+                    <td style={{ textAlign: "center", padding: "14px 8px", fontSize: 16, fontWeight: 900, color: "#f0f0f0" }}>{row.left}</td>
+                    <td style={{ textAlign: "center", padding: "14px 8px", fontSize: 16, fontWeight: 900, color: "#f0f0f0" }}>{row.right}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <button 
+              onClick={() => setShowStats(false)}
+              style={{
+                width: "100%", marginTop: 24, padding: "12px 0", borderRadius: 8,
+                background: "#1e1e2e", border: "1px solid #2a2a3a", color: "#f0f0f0",
+                fontWeight: 900, cursor: "pointer", letterSpacing: 1
+              }}
+            >
+              CLOSE
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -837,8 +1050,8 @@ function SectionLabel({ label }) {
 
 function EventBtn({ ev, team, flash, onClick, size }) {
   const isFlashing = flash?.type === "event" && flash?.event === ev.key && flash?.team === team;
-  const color = team === "home" ? "#3b82f6" : "#ef4444";
-  const activeColor = team === "home" ? "#1d4ed8" : "#b91c1c";
+  const color = team === "left" ? "#3b82f6" : "#ef4444";
+  const activeColor = team === "left" ? "#1d4ed8" : "#b91c1c";
   const isGoal = ev.key === "GOAL";
   const sk = shortcutLabel(ev);
 
@@ -870,10 +1083,20 @@ function EventBtn({ ev, team, flash, onClick, size }) {
         boxShadow: isGoal ? `0 0 12px ${color}44` : "none",
       }}
     >
-      <span>{ev.label}</span>
+      <span style={{ fontWeight: 900 }}>{ev.label}</span>
       {sk && (
-        <span style={{ fontSize: 8, color: isFlashing ? "#ffffff88" : "#555", letterSpacing: 1 }}>
-          [{sk}]
+        <span style={{ 
+          fontSize: 10, 
+          color: isFlashing ? "#ffffffaa" : isGoal ? `${color}aa` : "#777", 
+          letterSpacing: 1.5,
+          background: isFlashing ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.2)",
+          padding: "1px 6px",
+          borderRadius: 4,
+          marginTop: 2,
+          fontWeight: 900,
+          border: `1px solid ${isFlashing ? "#ffffff44" : "#222"}`
+        }}>
+          {sk}
         </span>
       )}
     </button>

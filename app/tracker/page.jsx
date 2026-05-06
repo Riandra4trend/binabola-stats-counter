@@ -211,6 +211,21 @@ export default function TrackerPage() {
     saveSession(updated);
   }, [selectedTeam, selectedJersey, events, timerMs, loaded, streamStartTime]);
 
+  // ── Playback Helpers ──
+  const ensurePlaying = useCallback(() => {
+    if (playerRef.current && typeof playerRef.current.playVideo === "function") {
+      playerRef.current.playVideo();
+    }
+    setRunning(true);
+  }, []);
+
+  const ensurePaused = useCallback(() => {
+    if (playerRef.current && typeof playerRef.current.playVideo === "function") {
+      playerRef.current.pauseVideo();
+    }
+    setRunning(false);
+  }, []);
+
   // ── YouTube Player Mounting ──
   useEffect(() => {
     if (!videoId || typeof window === "undefined") return;
@@ -361,10 +376,7 @@ export default function TrackerPage() {
         return [loggedEvent, correctedFirst, ...prev.slice(1)];
       });
       setSelectedJersey(null);
-      if (videoId && playerRef.current) {
-        playerRef.current.playVideo?.();
-      }
-      setRunning(true);
+      ensurePlaying();
       setFlash({ type: "event", team: selectedTeam, event: eventKey });
       setTimeout(() => setFlash(null), 300);
       return;
@@ -385,13 +397,10 @@ export default function TrackerPage() {
     setEvents(prev => [newEvent, ...prev]);
     setSelectedJersey(null);
     // Paused → start clock; already running → leave running (never pause on event)
-    if (videoId && playerRef.current) {
-      playerRef.current.playVideo?.();
-    }
-    setRunning(true);
+    ensurePlaying();
     setFlash({ type: "event", team: selectedTeam, event: eventKey });
     setTimeout(() => setFlash(null), 300);
-  }, [selectedTeam, selectedJersey]);
+  }, [selectedTeam, selectedJersey, ensurePlaying]);
 
   const removeEventById = useCallback((eventId) => {
     setEvents(prev => prev.filter(e => e.id !== eventId));
@@ -431,11 +440,10 @@ export default function TrackerPage() {
       timerMsRef.current = t;
       
       if (videoId && playerRef.current) {
-        playerRef.current.pauseVideo?.();
         playerRef.current.seekTo?.(t / 1000, true);
       }
       
-      setRunning(false);
+      ensurePaused();
       return;
     }
     setEvents(prev => prev.filter(e => e.id !== last.event.id));
@@ -445,12 +453,11 @@ export default function TrackerPage() {
     
     // Seek and pause video back on undo
     if (videoId && playerRef.current) {
-      playerRef.current.pauseVideo?.();
       playerRef.current.seekTo?.(prev / 1000, true);
     }
     
-    setRunning(false); // pause after undo
-  }, [videoId]);
+    ensurePaused();
+  }, [videoId, ensurePaused]);
 
   const commitTimerEdit = useCallback(() => {
     if (timerEdit === null) return;
@@ -463,9 +470,9 @@ export default function TrackerPage() {
   }, [timerEdit]);
 
   const beginTimerEdit = useCallback(() => {
-    setRunning(false);
+    ensurePaused();
     setTimerEdit(formatTimeMs(timerMsRef.current));
-  }, []);
+  }, [ensurePaused]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -483,12 +490,11 @@ export default function TrackerPage() {
       }
       if (e.key === " " || e.code === "Space") {
         e.preventDefault();
-        const isRunning = runningRef.current;
-        if (videoId && playerRef.current) {
-          if (isRunning) playerRef.current.pauseVideo?.();
-          else playerRef.current.playVideo?.();
+        if (running) {
+          ensurePaused();
+        } else {
+          ensurePlaying();
         }
-        setRunning(!isRunning);
         return;
       }
 
